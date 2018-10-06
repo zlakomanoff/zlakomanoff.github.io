@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NES ROMs extractor</title>
+    <meta name="description" content="Extract PRG and CHR roms from your .nes rom file"/>
+    <style>
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+        }
+        body {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        pre a {
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+
+<div>
+    <input type="file" id="filePicker" accept="application/vnd.nintendo.snes.rom">
+    <hr>
+    <pre id="info">Please select .NES rom file</pre>
+</div>
+
+<script>
+
+    class NesRom {
+
+        get romsOffset() {
+            return this.headerSize + this.trainerSize;
+        }
+
+        _donwnloadLink(name, fileName, arrayBuffer) {
+            const blob = new Blob([arrayBuffer], {type: 'application/octet-binary'});
+            const link = document.createElement('a');
+            link.text = name;
+            link.href = URL.createObjectURL(blob);
+            link.download = fileName;
+            return link;
+        }
+
+        get prgRomSize() {
+            return this.prgRomBanksSize * this.prgRomBanksCount;
+        }
+
+        get prgRomArrayBuffer() {
+            return this.arrayBuffer.slice(this.romsOffset, this.romsOffset + this.prgRomSize);
+        }
+
+        get prgRomFileName() {
+            return this.fileName + '_PRG_ROM.bin';
+        }
+
+        get prgRomDownloadLink() {
+            return this._donwnloadLink('PRG_ROM', this.prgRomFileName, this.prgRomArrayBuffer);
+        }
+
+        get chrRomSize() {
+            return this.chrRomBanksSize * this.chrRomBanksCount;
+        }
+
+        get chrRomArrayBuffer() {
+            return this.arrayBuffer.slice(this.romsOffset + this.prgRomSize, this.romsOffset + this.prgRomSize + this.chrRomSize);
+        }
+
+        get chrRomFileName() {
+            return this.fileName + '_CHR_ROM.bin';
+        }
+
+        get chrRomDownloadLink() {
+            return this._donwnloadLink('CHR_ROM', this.chrRomFileName, this.chrRomArrayBuffer);
+        }
+
+        constructor(fileName, arrayBuffer) {
+            this.fileName = fileName;
+            this.arrayBuffer = arrayBuffer;
+
+            this.headerSize = 16;
+            this.trainerSize = 0;
+
+            this.chrRomBanksSize = 8192;
+            this.prgRomBanksSize = 16384;
+
+            let arrayBufferView = new DataView(this.arrayBuffer, 0, 16);
+
+            if ((arrayBufferView.getUint8(6) & 0b00100000) !== 0) {
+                this.trainerSize = 512; // if trainer exists
+            }
+
+            this.chrRomBanksCount = arrayBufferView.getUint8(4);
+            this.prgRomBanksCount = arrayBufferView.getUint8(5);
+        }
+    }
+
+    function handleFileSelect(event) {
+        const info = document.getElementById('info');
+
+        const reader = new FileReader();
+        const romFile = event.target.files[0];
+
+        let fileExtension = romFile.name.substr(-4).toLowerCase();
+        if (fileExtension !== '.nes') {
+            info.innerText = 'Please select .nes rom file';
+            return;
+        }
+
+        let fileReaderPromise = new Promise((resolve) => {
+            reader.onload = (event) => {
+                document.nesRom = new NesRom(romFile.name.split('.').slice(0, -1).join('.'), event.target.result);
+                resolve();
+            };
+            reader.readAsArrayBuffer(event.target.files[0]);
+        });
+
+        fileReaderPromise.then(showRomInfo);
+    }
+
+    function showRomInfo() {
+        const nesRom = document.nesRom;
+        const i = document.getElementById('info');
+        i.innerText = '';
+        i.ap = function(message) {
+            if(typeof message === 'string'){
+                this.appendChild(document.createTextNode(message));
+            } else {
+                this.appendChild(message);
+            }
+            this.appendChild(document.createTextNode("\n"));
+        };
+
+        i.ap(nesRom.prgRomDownloadLink);
+        i.ap('├ blocks: ' + nesRom.prgRomBanksCount);
+        i.ap('├─ bytes: ' + nesRom.prgRomSize);
+        i.ap('└── bits: ' + (nesRom.prgRomSize * 8));
+
+        i.ap('');
+
+        i.ap(nesRom.chrRomDownloadLink);
+        i.ap('├ blocks: ' + nesRom.chrRomBanksCount);
+        i.ap('├─ bytes: ' + nesRom.chrRomSize);
+        i.ap('└── bits: ' + (nesRom.chrRomSize * 8));
+    }
+
+    document.getElementById('filePicker').addEventListener('change', handleFileSelect, false);
+</script>
+
+</body>
+</html>
