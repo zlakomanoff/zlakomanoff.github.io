@@ -5,31 +5,42 @@
     <title>NES ROMs extractor</title>
     <meta name="description" content="Extract PRG and CHR roms from your .nes rom file"/>
     <style>
-        html {
+        html, body {
             margin: 0;
             padding: 0;
             width: 100%;
             height: 100%;
         }
+
         body {
-            width: 100%;
-            height: 100%;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
         }
+
         pre a {
             text-decoration: none;
+        }
+
+        a#close {
+            position: absolute;
+            right: 30px;
+            top: 15px;
+            font-size: 50px;
+            text-decoration: none;
+            color: lightgray;
         }
     </style>
 </head>
 <body>
 
+<a href="index.html" id="close">x</a>
+
 <div>
-    <input type="file" id="filePicker" accept="application/vnd.nintendo.snes.rom">
+    <input type="file">
     <hr>
-    <pre id="info">Please select .NES rom file</pre>
+    <pre>Please select .NES rom file</pre>
 </div>
 
 <script>
@@ -97,13 +108,13 @@
                 this.trainerSize = 512; // if trainer exists
             }
 
-            this.chrRomBanksCount = arrayBufferView.getUint8(4);
-            this.prgRomBanksCount = arrayBufferView.getUint8(5);
+            this.prgRomBanksCount = arrayBufferView.getUint8(4);
+            this.chrRomBanksCount = arrayBufferView.getUint8(5);
         }
     }
 
     function handleFileSelect(event) {
-        const info = document.getElementById('info');
+        const info = document.getElementsByTagName('pre')[0];
 
         const reader = new FileReader();
         const romFile = event.target.files[0];
@@ -114,23 +125,40 @@
             return;
         }
 
-        let fileReaderPromise = new Promise((resolve) => {
+        let fileReaderPromise = new Promise((resolve, reject) => {
             reader.onload = (event) => {
-                document.nesRom = new NesRom(romFile.name.split('.').slice(0, -1).join('.'), event.target.result);
-                resolve();
+
+                let gauge = [0x4E, 0x45, 0x53, 0x1A]; // NES<EOF>
+                let fileView = new DataView(event.target.result, 0, 4);
+                let goodFile = true;
+
+                for (let i = 0; i < 4; i++) {
+                    if (fileView.getUint8(i) !== gauge[i]) {
+                        goodFile = false;
+                        break;
+                    }
+                }
+
+                if (goodFile) {
+                    document.nesRom = new NesRom(romFile.name.split('.').slice(0, -1).join('.'), event.target.result);
+                    resolve();
+                } else {
+                    reject('incompatible file type');
+                }
+
             };
             reader.readAsArrayBuffer(event.target.files[0]);
         });
 
-        fileReaderPromise.then(showRomInfo);
+        fileReaderPromise.then(showRomInfo, (message) => { info.innerText = message; });
     }
 
     function showRomInfo() {
         const nesRom = document.nesRom;
-        const i = document.getElementById('info');
+        const i = document.getElementsByTagName('pre')[0];
         i.innerText = '';
-        i.ap = function(message) {
-            if(typeof message === 'string'){
+        i.ap = function (message) {
+            if (typeof message === 'string') {
                 this.appendChild(document.createTextNode(message));
             } else {
                 this.appendChild(message);
@@ -151,7 +179,7 @@
         i.ap('└── bits: ' + (nesRom.chrRomSize * 8));
     }
 
-    document.getElementById('filePicker').addEventListener('change', handleFileSelect, false);
+    document.getElementsByTagName('input')[0].addEventListener('change', handleFileSelect, false);
 </script>
 
 </body>
