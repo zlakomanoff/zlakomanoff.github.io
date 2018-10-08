@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NES CHR rom to image converter</title>
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0">
+    <meta name="description" content="Convert your CHR rom to image file"/>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        pre a {
+            text-decoration: none;
+        }
+
+        a#close {
+            position: absolute;
+            right: 30px;
+            top: 15px;
+            font-size: 50px;
+            text-decoration: none;
+            color: lightgray;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<a href="index.html" id="close">x</a>
+
+<div>
+    <input type="file">
+    <hr>
+    <pre>Please select .NES CHR rom file</pre>
+    <div id="bag"></div>
+</div>
+
+<script>
+    /*
+        How it works
+        https://n3s.io/index.php?title=How_It_Works
+        https://erikonarheim.com/posts/nes-sprite-editor
+     */
+
+    function handleFileSelect(event) {
+        const info = document.getElementsByTagName('pre')[0];
+        const reader = new FileReader();
+        const bag = document.getElementById('bag');
+        let fileName = event.target.files[0].name;
+
+        reader.onload = (event) => {
+            info.innerText = "";
+
+            while (bag.hasChildNodes()) {
+                bag.removeChild(bag.lastChild);
+            }
+
+            let canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 128;
+
+            bag.appendChild(canvas);
+
+            //let canvas = document.getElementById('canvas');
+            let canvasContext = canvas.getContext('2d');
+
+            let myImageData = canvasContext.createImageData(1, 1);
+            let dataView = new DataView(event.target.result);
+
+            let d = myImageData.data;
+            d[3] = 255;
+
+            let palette = [[0, 0, 0], [85, 85, 85], [170, 170, 170], [255, 255, 255]];
+            let tileMap = 0;
+
+            for (let tile = 0; (tile * 16) < dataView.byteLength; tile++) {
+
+                if (tile > 0 && tile % 256 === 0) {
+                    tileMap++;
+                }
+
+                let tileOffset = tile * 16;
+                let tilesPerLine = 16;
+
+                let column = (tile % tilesPerLine) * 8;
+                let row = Math.floor(tile / tilesPerLine) * 8 - (tileMap * 128);
+
+                for (let i = 0; i < 8; i++) {
+                    for (let j = 7; j >= 0; j--) {
+                        let mask = 0x1;
+
+                        let channel1 = dataView.getUint8(tileOffset + i);
+                        let channel2 = dataView.getUint8(tileOffset + i + 8);
+
+                        let color = ((channel1 >>> j) & mask) + (((channel2 >>> j) & mask) << 1);
+
+                        d[0] = palette[color][0];
+                        d[1] = palette[color][1];
+                        d[2] = palette[color][2];
+
+                        canvasContext.putImageData(myImageData, (tileMap * 128) + column + (7 - j), row + i);
+                    }
+                }
+            }
+
+            let lnk = document.createElement('a');
+            lnk.download = fileName + '.png';
+            lnk.text = 'Download as .PNG';
+            lnk.href = canvas.toDataURL("image/png;base64");
+            bag.appendChild(lnk);
+        };
+
+        reader.readAsArrayBuffer(event.target.files[0]);
+    }
+
+    document.getElementsByTagName('input')[0].addEventListener('change', handleFileSelect, false);
+</script>
+
+</body>
+</html>
