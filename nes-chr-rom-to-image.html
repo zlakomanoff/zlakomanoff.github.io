@@ -20,21 +20,26 @@
             align-items: center;
         }
 
-        pre a {
+        a {
             text-decoration: none;
         }
 
-        a#close {
+        #bag {
             position: absolute;
+            padding-bottom: 100px;
+        }
+
+        a#close {
+            position: fixed;
             right: 30px;
             top: 15px;
             font-size: 50px;
-            text-decoration: none;
             color: lightgray;
         }
 
         canvas {
             display: block;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -56,10 +61,69 @@
         https://erikonarheim.com/posts/nes-sprite-editor
      */
 
+    function renderBank(bank, fileName, counter) {
+        const bag = document.getElementById('bag');
+
+        let canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 128;
+
+        bag.appendChild(canvas);
+
+        let canvasContext = canvas.getContext('2d');
+
+        let myImageData = canvasContext.createImageData(1, 1);
+        let dataView = new DataView(bank);
+
+        let d = myImageData.data;
+        d[3] = 255;
+
+        let palette = [[0, 0, 0], [85, 85, 85], [170, 170, 170], [255, 255, 255]];
+        let tileMap = 0;
+
+        for (let tile = 0; (tile * 16) < dataView.byteLength; tile++) {
+
+            if (tile > 0 && tile % 256 === 0) {
+                tileMap++;
+            }
+
+            let tileOffset = tile * 16;
+            let tilesPerLine = 16;
+
+            let column = (tile % tilesPerLine) * 8;
+            let row = Math.floor(tile / tilesPerLine) * 8 - (tileMap * 128);
+
+            for (let i = 0; i < 8; i++) {
+                for (let j = 7; j >= 0; j--) {
+                    let mask = 0x1;
+
+                    let channel1 = dataView.getUint8(tileOffset + i);
+                    let channel2 = dataView.getUint8(tileOffset + i + 8);
+
+                    let color = ((channel1 >>> j) & mask) + (((channel2 >>> j) & mask) << 1);
+
+                    d[0] = palette[color][0];
+                    d[1] = palette[color][1];
+                    d[2] = palette[color][2];
+
+                    canvasContext.putImageData(myImageData, (tileMap * 128) + column + (7 - j), row + i);
+                }
+            }
+        }
+
+        let lnk = document.createElement('a');
+        lnk.download = counter + '.' + fileName + '.png';
+        lnk.text = counter + '. download as .png';
+        lnk.href = canvas.toDataURL("image/png;base64");
+        bag.appendChild(lnk);
+    }
+
     function handleFileSelect(event) {
         const info = document.getElementsByTagName('pre')[0];
         const reader = new FileReader();
         const bag = document.getElementById('bag');
+        const bankSize = 8192;
+
         let fileName = event.target.files[0].name;
 
         reader.onload = (event) => {
@@ -69,59 +133,11 @@
                 bag.removeChild(bag.lastChild);
             }
 
-            let canvas = document.createElement('canvas');
-            canvas.width = 256;
-            canvas.height = 128;
+            let banksCount = event.target.result.byteLength / bankSize;
 
-            bag.appendChild(canvas);
-
-            //let canvas = document.getElementById('canvas');
-            let canvasContext = canvas.getContext('2d');
-
-            let myImageData = canvasContext.createImageData(1, 1);
-            let dataView = new DataView(event.target.result);
-
-            let d = myImageData.data;
-            d[3] = 255;
-
-            let palette = [[0, 0, 0], [85, 85, 85], [170, 170, 170], [255, 255, 255]];
-            let tileMap = 0;
-
-            for (let tile = 0; (tile * 16) < dataView.byteLength; tile++) {
-
-                if (tile > 0 && tile % 256 === 0) {
-                    tileMap++;
-                }
-
-                let tileOffset = tile * 16;
-                let tilesPerLine = 16;
-
-                let column = (tile % tilesPerLine) * 8;
-                let row = Math.floor(tile / tilesPerLine) * 8 - (tileMap * 128);
-
-                for (let i = 0; i < 8; i++) {
-                    for (let j = 7; j >= 0; j--) {
-                        let mask = 0x1;
-
-                        let channel1 = dataView.getUint8(tileOffset + i);
-                        let channel2 = dataView.getUint8(tileOffset + i + 8);
-
-                        let color = ((channel1 >>> j) & mask) + (((channel2 >>> j) & mask) << 1);
-
-                        d[0] = palette[color][0];
-                        d[1] = palette[color][1];
-                        d[2] = palette[color][2];
-
-                        canvasContext.putImageData(myImageData, (tileMap * 128) + column + (7 - j), row + i);
-                    }
-                }
+            for (let i = 0; i < banksCount; i++) {
+                renderBank(event.target.result.slice(i * bankSize, (i + 1) * bankSize), fileName, i + 1);
             }
-
-            let lnk = document.createElement('a');
-            lnk.download = fileName + '.png';
-            lnk.text = 'Download as .PNG';
-            lnk.href = canvas.toDataURL("image/png;base64");
-            bag.appendChild(lnk);
         };
 
         reader.readAsArrayBuffer(event.target.files[0]);
