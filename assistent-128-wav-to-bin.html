@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ассистент 86/128 wav to bin converter</title>
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0">
+    <meta name="description" content="Convert your CHR rom to image file"/>
+    <script async="" src="/assets/jszip.min.js"></script>
+    <!--<script
+        src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.6.0/jszip.min.js"
+        integrity="sha512-uVSVjE7zYsGz4ag0HEzfugJ78oHCI1KhdkivjQro8ABL/PRiEO4ROwvrolYAcZnky0Fl/baWKYilQfWvESliRA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"
+    ></script>-->
+    <script async="" src="/assets/FileSaver.min.js"></script>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        a {
+            text-decoration: none;
+        }
+
+        a#close {
+            position: fixed;
+            right: 30px;
+            top: 15px;
+            font-size: 50px;
+            color: lightgray;
+        }
+
+        canvas {
+            display: block;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<a href="index.html" id="close">x</a>
+
+<div>
+    <p>
+        Конвертер wav файлов программ для ПК Ассистент 86/128<br>
+        Подерживается обычная и быстрая скорость файлов.<br>
+        Поддерживаются файлы без бутлоадера и с бутлоадером.<br>
+        Wav файл доллен быть: моно, дискретизация 44100, 8 бит.<br>
+        Если выходит ошибка сравнения crc, можно попробовать изменить force на 2.<br>
+        Если не помогает - пришлите мне исходный wav файл, я посмотрю в чем может быть дело.<br>
+        debug - добавляет лог в результирующий архив и выводит отладочную информацию в консоль.<br>
+    </p>
+    <p>
+        <label for="speed">speed:
+            <select id="speed">
+                <option value="1" selected>fast</option>
+                <option value="0">normal</option>
+            </select>
+        </label>
+    </p>
+
+    <p>
+        <label for="force">force (3 or 2):
+            <input type="text" id="force" value="3" />
+        </label>
+    </p>
+
+    <p>
+        <label for="debug">debug:
+            <select id="debug">
+                <option value="0" selected>off</option>
+                <option value="1">on</option>
+            </select>
+        </label>
+    </p>
+
+    <p>
+        <input type="file" id="wav">
+        <hr>
+        <pre>Please select .wav file</pre>
+    </p>
+    <p>
+        <div id="errors"></div>
+    </p>
+</div>
+
+<script>
+
+window.debug = false;
+
+const waveSignalMiddle = 127;
+
+const pcmWindowSize = 110;
+
+const log = [];
+const errors = [];
+
+const originLog = window.console.log;
+
+window.console.log = (...messages) => {
+    const message = messages.join(' ');
+    log.push(message);
+    if (window.debug) originLog(message);
+}
+window.console.error = (...messages) => {
+    const message = messages.join(' ');
+    log.push(message);
+    errors.push(message);
+    if (window.debug) originLog(message);
+}
+
+class DataViewHandler {
+    _offset = 0;
+
+    /**
+     * @param {ArrayBuffer} arrayBuffer
+     * @param {number} offset
+     */
+    constructor(arrayBuffer, offset = 0) {
+        this._dv = new DataView(arrayBuffer);
+        this._offset = offset;
+    }
+
+    char() {
+        const buffer = this._dv.getUint8(this._offset);
+        this._offset += 1;
+        return String.fromCharCode(buffer);
+    }
+
+    ui8() {
+        const buffer = this._dv.getUint8(this._offset);
+        this._offset += 1;
+        return buffer;
+    }
+
+    ui16() {
+        const buffer = this._dv.getUint16(this._offset, true);
+        this._offset += 2;
+        return buffer;
+    }
+
+    ui32() {
+        const buffer = this._dv.getUint32(this._offset, true);
+        this._offset += 4;
+        return buffer;
+    }
+}
+
+const getCRC = (data) => {
+    let crc = 0xFFFF;
+
+    for (let byte of data) {
+        crc ^= byte << 8;
+        for(let k = 0; k < 8; k++)
+            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+    }
+    crc = ~crc;
+
+    return crc & 0xFFFF;
+}
+
+const parseWavHeader = (dv) => ({
+    chunkId: `${dv.char()}${dv.char()}${dv.char()}${dv.char()}`,
+    chunkSize: dv.ui32(),
+    wave: `${dv.char()}${dv.char()}${dv.char()}${dv.char()}`,
+    subchunk1Id: `${dv.char()}${dv.char()}${dv.char()}${dv.char()}`,
+    subchunk1Size: dv.ui32(),
+    audioFormat: dv.ui16(),
+    numChannels: dv.ui16(),
+    sampleRate: dv.ui32(),
+    byteRate: dv.ui32(),
+    blockAlign: dv.ui16(),
+    bitsPerSample: dv.ui16(),
+    subchunk2Id: `${dv.char()}${dv.char()}${dv.char()}${dv.char()}`,
+    subchunk2Size: dv.ui32(),
+});
+
+const pcmToBitstream = (pcmBuffer) => {
+    const pointsCheckForce = Number.parseInt(document.getElementById('force').value);
+    const speed = Number.parseInt(document.getElementById('speed').value, 10);
+
+    // точки замера для нолной скорости (CTR+ALT+1) и для половинной (дефолтной)
+    const checkPoints = speed === 1 ? [ 0, 16, 27, 38, 49 ] : [ 0, 19, 39, 59, 79 ];
+
+    // самооцифрованные касеты
+    //const checkPoints = [ 0, 15, 26, 37, 48 ];
+
+    const bitstreamBuffer = [];
+
+    for (let caret = 0; caret < pcmBuffer.length - pcmWindowSize; caret++) {
+
+        const pcmWindow = pcmBuffer.slice(caret, caret + pcmWindowSize);
+
+        const points = [ null, null, null, null, null ];
+
+        // замеряем точки
+        for (let cp = 0; cp < checkPoints.length; cp++) {
+            let highPointsCounter = 0;
+            let lowPointsCounter = 0;
+
+            for (let f = 0; f < pointsCheckForce; f++) {
+                if (pcmWindow[checkPoints[cp] + f] >= waveSignalMiddle) {
+                    highPointsCounter++;
+                } else {
+                    lowPointsCounter++
+                }
+            }
+
+            if (highPointsCounter === pointsCheckForce) {
+                points[cp] = 'H'
+            }
+            if (lowPointsCounter === pointsCheckForce) {
+                points[cp] = 'L'
+            }
+        }
+
+        // ищем 0
+        if (
+            (points[0] === 'L' && points[1] === 'H' && points[2] === 'L' && points[3] === 'H') ||
+            (points[0] === 'H' && points[1] === 'L' && points[2] === 'H' && points[3] === 'L')
+            // points.slice(0, 3).join('') === 'LHLH' || points.slice(0, 3).join('') === 'HLHL'
+        ) {
+
+            let shift = checkPoints[2];
+
+            // ищем конец полуволны нуля
+            for (let i = shift; i < pcmWindow.length - 1; i++) {
+                if (
+                    (points[0] === 'L' && pcmWindow[i] >= waveSignalMiddle) ||
+                    (points[0] === 'H' && pcmWindow[i] < waveSignalMiddle)
+                ) {
+                    shift = i - 10;
+                    break;
+                }
+            }
+
+            caret += shift - 1; // 1 добавится инкрементом в for :/
+
+            bitstreamBuffer.push('0');
+            continue;
+        }
+
+        // ищем 1
+        if (
+            (points[0] === 'L' && points[1] === 'H' && points[2] === 'H' && points[3] === 'L' && points[4] === 'L') ||
+            (points[0] === 'H' && points[1] === 'L' && points[2] === 'L' && points[3] === 'H' && points[4] === 'H')
+            // points.join('') === 'LHHLL' || points.join('') === 'HLLHH'
+        ) {
+
+            // ищем конец полуволны единицы
+            let shift = checkPoints[4];
+
+            for (let i = shift; i < pcmWindow.length - 1; i++) {
+                if (
+                    (points[0] === 'L' && pcmWindow[i] >= waveSignalMiddle) ||
+                    (points[0] === 'H' && pcmWindow[i] < waveSignalMiddle)
+                ) {
+                    shift = i - 10;
+                    break;
+                }
+            }
+
+            caret += shift - 1; // 1 добавится инкрементом в for :/
+
+            bitstreamBuffer.push('1');
+            continue;
+        }
+
+    }
+
+    return bitstreamBuffer;
+}
+
+const bitstreamToBinaries = (bitstream) => {
+    let globalBitStreamOffset = 0;
+
+    let binariesBuffer = [];
+
+    for (let globalProgramCounter = 0; globalProgramCounter < 999; globalProgramCounter++) {
+
+        let headerAddress = null;
+        let bodyAddress = 0;
+
+        // ищем стартовый сиквенс, это первый 0 после череды единиц.
+        for (let i = globalBitStreamOffset; i < bitstream.length - 8; i++) {
+            const buf = bitstream.slice(i, i + 16);
+            if (buf === 0xFE16.toString(2)) {
+                headerAddress = i + 8;
+                break;
+            }
+        }
+
+        // ничего не нашли, выходим
+        if (headerAddress === null) {
+            console.log('nothing else found, exit!')
+            break;
+        }
+
+        console.log(`READ: ${globalProgramCounter} header`)
+
+        // synchronization byte дохжен быть 0x16 (прерывание БИОС)
+        const syncByte = parseInt(bitstream.slice(headerAddress, headerAddress + 8), 2);
+        if (syncByte !== 0x16) {
+            console.log('wrong synchronization byte');
+            break;
+        }
+
+        headerAddress += 8;
+
+        const headerTrailer = parseInt(bitstream.slice(headerAddress, headerAddress + 8), 2);
+        if (headerTrailer !== 0xA5) {
+            console.log('wrong header trailer');
+            break;
+        }
+
+        // headerAddress += 8;
+
+        // читаем сам header
+        const headerBuffer = [];
+
+        for (let i = headerAddress; i < headerAddress + (256 * 8); i += 8) {
+            const buf = bitstream.slice(i, i + 8);
+            const int = parseInt(buf, 2);
+            headerBuffer.push(int)
+        }
+
+        console.log('program name:', `[${headerBuffer.slice(1, 9).map(b => String.fromCharCode(b)).join('')}]`);
+
+        // Bit	Meaning if set	Example command to create
+        //                  7	Tokenised BASIC	SAVE "file"
+        //                  6	ASCII listing	SAVE "file", A
+        //                  5	Protected tokenised BASIC	SAVE "file", P
+        //                  0	Memory area	BSAVE "file", address, length
+        //                  No bits set	Data	OPEN "O",1,"file"
+
+        const programTypeBinary = headerBuffer[9].toString(2);
+        let programType = 'Data (OPEN "O",1,"file")'
+
+        if (programTypeBinary[0]) {
+            programType = 'Tokenised BASIC (SAVE "file")'
+        }
+        if (programTypeBinary[1]) {
+            programType = 'ASCII listing (SAVE "file", A)'
+        }
+        if (programTypeBinary[2]) {
+            programType = 'Protected tokenised BASIC (SAVE "file", P)'
+        }
+        if (programTypeBinary[7]) {
+            programType = 'Memory area (BSAVE "file", address, length)'
+        }
+
+        console.log('program type:', programType);
+
+        const buffer = new ArrayBuffer(2);
+        const view = new DataView(buffer);
+
+        view.setUint8(0, headerBuffer[0x0A]);
+        view.setUint8(1, headerBuffer[0x0B]);
+
+        const bodyLength = view.getUint16(0, true);
+
+        console.log('program bytes:', bodyLength);
+
+        const programBlocks = Math.floor(bodyLength / 256) + ((bodyLength % 256 > 0) ? 1 : 0);
+        console.log('program blocks:', programBlocks);
+
+        view.setUint8(0, headerBuffer[0x0C]);
+        view.setUint8(1, headerBuffer[0x0D]);
+
+        const bodySegment = view.getUint16(0, true);
+
+        console.log('program segment:', bodySegment);
+
+        view.setUint8(0, headerBuffer[0x0E]);
+        view.setUint8(1, headerBuffer[0x0F]);
+
+        const bodyOffset = view.getUint16(0, true);
+
+        console.log('program offset:', bodyOffset);
+
+        // читаем CRC
+        const crc1 = parseInt(bitstream.slice(headerAddress + (256 * 8), headerAddress + (256 * 8) + 8), 2);
+        const crc2 = parseInt(bitstream.slice(headerAddress + (256 * 8) + 8, headerAddress + (256 * 8) + 16), 2);
+
+        view.setUint8(0, crc2);
+        view.setUint8(1, crc1);
+
+        const headerCRC = view.getUint16(0, true);
+        const calculatedCRC = getCRC(headerBuffer)
+
+        console.log('header CRC:', headerCRC.toString(16));
+        console.log('calculated CRC: ', calculatedCRC.toString(16));
+
+        console.log('CRC check:', headerCRC === calculatedCRC ? 'OK' : 'BAD');
+        console.log('')
+
+        // пишем хеадер в файл
+        binariesBuffer.push({
+            name: `${globalProgramCounter}0-header.bin`,
+            file: new Uint8Array(headerBuffer),
+        });
+
+        console.log(`READ: ${globalProgramCounter} body`)
+
+        // читаем тело программы
+        bodyAddress = headerAddress + (256 * 8) + (2 * 8); // 256 байт - размер галоловка, + 2 байта CRC
+
+        // ищем стартовый сиквенс, это первый 0 после череды единиц.
+        for (let i = bodyAddress; i < bitstream.length - 8; i++) {
+            const buf = bitstream.slice(i, i + 16);
+            if (buf === 0xFE16.toString(2)) {
+                bodyAddress = i + 8;
+                break;
+            }
+        }
+
+        // synchronization byte должен быть 0x16 (прерывание БИОС)
+        const bodySyncByte = parseInt(bitstream.slice(bodyAddress, bodyAddress + 8), 2);
+        if (bodySyncByte !== 0x16) {
+            console.log('wrong body synchronization byte');
+            break;
+        }
+
+        bodyAddress += 8;
+
+        // читаем body
+        let bodyBuffer = [];
+
+        for (let i = bodyAddress; i < bodyAddress + (((programBlocks * 2) + (programBlocks * 256)) * 8); i += 8) {
+            bodyBuffer.push(parseInt(bitstream.slice(i, i + 8), 2));
+        }
+
+        let bodyBinaryBuf = [];
+
+        for (let blockCounter = 0, offset = 0; blockCounter < programBlocks; blockCounter += 1, offset += 256 + 2) {
+            const buf = bodyBuffer.slice(offset, offset + 256);
+            const crc = bodyBuffer.slice(offset + 256, offset + 256 + 2);
+
+            const dataCRC = crc.map(e => e.toString(16).padStart(2, '0')).join('');
+            const calculatedCRC = getCRC(buf).toString(16).padStart(4, '0');
+
+            console.log(`block ${blockCounter} CRC:`, dataCRC, calculatedCRC);
+
+            if (dataCRC !== calculatedCRC) {
+                console.error('crc incorrect');
+                break;
+            }
+
+            bodyBinaryBuf = [...bodyBinaryBuf, ...buf];
+        }
+
+        bodyBinaryBuf = bodyBinaryBuf.slice(0, bodyLength);
+
+        binariesBuffer.push({
+            name: `${globalProgramCounter}1-body.bin`,
+            file: new Uint8Array(bodyBinaryBuf),
+        });
+
+        globalBitStreamOffset += bodyAddress + (programBlocks * 256) + (programBlocks * 2);
+
+    }
+
+    return binariesBuffer;
+}
+
+const handleFileSelect = (event) => {
+
+    const reader = new FileReader();
+    const errorsNode = document.getElementById('errors');
+
+    let fileName = event.target.files[0].name;
+
+    reader.onload = (event) => {
+        log.length = 0;
+
+        errorsNode.innerText = '';
+
+        const dataView = new DataViewHandler(event.target.result, 0);
+
+        const wavHeader = parseWavHeader(dataView);
+        console.log('wav header:', JSON.stringify(wavHeader, null, 3));
+
+        const pcmBuffer = [];
+
+        for (let i = 0; i < wavHeader.subchunk2Size; i++) {
+            pcmBuffer.push(dataView.ui8());
+        }
+
+        const bitstreamBuffer = pcmToBitstream(pcmBuffer);
+        //console.log('bitstreamBuffer:', bitstreamBuffer);
+
+        const bitstreamString = bitstreamBuffer.join('');
+
+        const binaries = bitstreamToBinaries(bitstreamString);
+
+        if (errors.length === 0) {
+            const zip = new JSZip();
+
+            binaries.forEach(binary => {
+                zip.file(binary.name, binary.file);
+            })
+
+            if (window.debug) zip.file('bitstream.txt', bitstreamString);
+            if (window.debug) zip.file('log.txt', log.join("\n"));
+
+            zip.generateAsync({
+                type: 'blob',
+                compression: 'DEFLATE',
+                compressionOptions: {
+                    level: 9
+                }
+            }).then((blob) => saveAs(blob, `${fileName}.zip`));
+        } else {
+            errorsNode.innerText = JSON.stringify(errors, null, 3);
+        }
+    }
+
+    reader.readAsArrayBuffer(event.target.files[0]);
+}
+
+document
+    .getElementById('wav')
+    .addEventListener('change', handleFileSelect, false);
+
+document
+    .getElementById('debug')
+    .addEventListener('change', e => window.debug = e.target.value === '1', false);
+
+</script>
+
+</body>
+</html>
