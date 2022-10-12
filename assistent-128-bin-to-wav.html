@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Ассистент 86/128 bin to wav converter</title>
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0">
+    <meta name="description" content="Convert your CHR rom to image file"/>
+    <script async="" src="/assets/jszip.min.js"></script>
+    <script async="" src="/assets/FileSaver.min.js"></script>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        a {
+            text-decoration: none;
+        }
+
+        a#close {
+            position: fixed;
+            right: 30px;
+            top: 15px;
+            font-size: 50px;
+            color: lightgray;
+        }
+
+        canvas {
+            display: block;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<a href="index.html" id="close">x</a>
+
+<div>
+    <p>
+        Конвертер wav файлов программ для ПК Ассистент 86/128<br>
+        <!--Подерживается обычная и быстрая скорость файлов.<br>-->
+        Поддерживаются файлы без бутлоадера и с бутлоадером.<br>
+        bin файлы должны быть упакованы в zip архив<br>
+    </p>
+    <p>
+        <label for="speed">speed:
+            <select id="speed" disabled>
+                <option value="1" selected>fast</option>
+                <option value="0">normal</option>
+            </select>
+        </label>
+    </p>
+
+    <p>
+        <input type="file" id="zip" accept="application/zip">
+        <hr>
+        <pre>Please select .zip file</pre>
+    </p>
+    <p>
+        <div id="errors"></div>
+    </p>
+</div>
+
+<script>
+
+// 22 точки, разница в 20
+const pcmZero = [
+    // 120, 100,  80,  60,  40,  20,  40,  60,  80, 100, 127,
+    // 130, 150, 170, 190, 210, 230, 210, 190, 170, 150, 127
+    20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+    230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230
+];
+
+// 44 точки, разница 10
+const pcmOne = [
+    // 120, 110, 100,  90,  80,  70,  60,  50,  40,  30,  20,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 127,
+    // 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 220, 210, 200, 190, 180, 170, 160, 150, 140, 130, 127
+    20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+    230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230
+];
+
+const getCRC = (data) => {
+    let crc = 0xFFFF;
+
+    for (let byte of data) {
+        crc ^= byte << 8;
+        for(let k = 0; k < 8; k++)
+            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+    }
+    crc = ~crc;
+
+    return crc & 0xFFFF;
+}
+
+const getCrcBytes = (data) => {
+    const crc = getCRC(data);
+    const crcString = crc.toString(16).padStart(4, '0');
+    return [
+        Number.parseInt(crcString.substring(0, 2), 16),
+        Number.parseInt(crcString.substring(2, 4), 16),
+    ];
+}
+
+const pcmToWav = (pcmBuffer) => {
+
+    /* {
+      chunkId: 'RIFF',
+      chunkSize: 11117664,
+      wave: 'WAVE',
+      subchunk1Id: 'fmt ',
+      subchunk1Size: 16,
+      audioFormat: 1,
+      numChannels: 1,
+      sampleRate: 44100,
+      byteRate: 44100,
+      blockAlign: 1,
+      bitsPerSample: 8,
+      subchunk2Id: 'data',
+      subchunk2Size: 11117628
+    } */
+
+    // wav заголовок
+    const wavHeader = new Uint8Array(44);
+
+    wavHeader.set([
+        0x52, 0x49, 0x46, 0x46, 0xE4, 0x6D, 0x60, 0x00, 0x57, 0x41,
+        0x56, 0x45, 0x66, 0x6D, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x00, 0x44, 0xAC, 0x00, 0x00, 0x44, 0xAC,
+        0x00, 0x00, 0x01, 0x00, 0x08, 0x00, 0x64, 0x61, 0x74, 0x61,
+        0xC0, 0x6D, 0x60, 0x00
+    ], 0);
+
+    const wavBuffer = new Uint8Array(wavHeader.length + pcmBuffer.length);
+
+    wavBuffer.set(wavHeader, 0);
+    wavBuffer.set(pcmBuffer, wavHeader.length);
+
+    const dataView = new DataView(wavBuffer.buffer);
+
+    // fill chunkSize - размер файла минус 8
+    dataView.setUint32(4, dataView.length - 8, true);
+
+    // fill subchunk2Size - Количество байт в области данных.
+    dataView.setUint32(40, pcmBuffer.length, true);
+
+    return wavBuffer;
+}
+
+const packToIbmPackage = (bytesBuffer) => {
+    bytesBuffer = new Uint8Array(bytesBuffer);
+
+    // выравнивание кратно 256 байт
+    const align = bytesBuffer.byteLength % 256;
+
+    if (align > 0) {
+        const fillerSize = 256 - align;
+        // const filler = new Array(fillerSize).fill(0x00); // дописываем нули (NOP ???)
+        const tmpBuffer = new Uint8Array(bytesBuffer.byteLength + fillerSize);
+        tmpBuffer.set(bytesBuffer, 0);
+        bytesBuffer = tmpBuffer;
+    }
+
+    // сначала идет 256 байт единиц oxFF
+    let payload = new Array(256).fill(0xFF);
+
+    // потом байты синхронизации 0xFE и 0x16
+    payload.push(0xFE);
+    payload.push(0x16);
+
+    // пушим по 256 байт с CRC
+    for (let i = 0; i <= (bytesBuffer.byteLength - 256); i += 256) {
+
+        const subArray = bytesBuffer.slice(i, i + 256);
+        const arrayBuffer = [ ...subArray ];
+
+        const crc = getCrcBytes(arrayBuffer);
+
+        payload = payload.concat(arrayBuffer);
+        payload = payload.concat(crc);
+    }
+
+    // trailer
+    payload = payload.concat(new Array(5).fill(0xFF));
+
+    return payload;
+}
+
+const bytesToPCM = (bytes, noGap = false) => {
+
+    let buffer = [];
+
+    const prefix  = noGap ? [] : new Array(44100).fill(128);
+    const postfix = noGap ? [] : new Array(22050).fill(128);
+
+    const push = pbs => pbs.forEach(byte => buffer.push(byte));
+
+    bytes.forEach(byte => {
+        push(((byte & 0b10000000) !== 0) ? pcmOne : pcmZero);
+        push(((byte & 0b01000000) !== 0) ? pcmOne : pcmZero);
+        push(((byte & 0b00100000) !== 0) ? pcmOne : pcmZero);
+        push(((byte & 0b00010000) !== 0) ? pcmOne : pcmZero);
+        push(((byte & 0b00001000) !== 0) ? pcmOne : pcmZero);
+        push(((byte & 0b00000100) !== 0) ? pcmOne : pcmZero);
+        push(((byte & 0b00000010) !== 0) ? pcmOne : pcmZero);
+        push(((byte & 0b00000001) !== 0) ? pcmOne : pcmZero);
+    });
+
+    return [ ...prefix, ...buffer, ...postfix ];
+}
+
+const handleFileSelect = (event) => {
+
+    const reader = new FileReader();
+    const errorsNode = document.getElementById('errors');
+
+    let fileName = event.target.files[0].name;
+
+    reader.onload = async (event) => {
+
+        errorsNode.innerText = '';
+
+        const zip = await JSZip.loadAsync(event.target.result);
+
+        let zipFiles = [];
+
+        // фильтруем файлы программы по названиям
+        for (let fileKey in zip.files) {
+            if (/\d{2}-(header|body)\.bin/.test(fileKey)) {
+                zipFiles.push(zip.files[fileKey]);
+            }
+        }
+
+        const promises = [];
+
+        zipFiles.forEach(file => {
+            promises.push(
+                new Promise(resolve => {
+                    file.async('arrayBuffer').then(payload => {
+                        resolve({
+                            name: file.name,
+                            data: payload,
+                        });
+                    });
+                })
+            );
+        });
+
+        const files = await Promise.all(promises);
+
+        // сортируем файлы по индексу в названии
+        const sortedFiles = files.sort((a, b) => {
+            if (a.name < b.name) return -1;
+            if (a.name > b.name) return 1;
+            return 0;
+        });
+
+        let pcmBuffer = []
+
+        sortedFiles.forEach(({ name, data }) => {
+            pcmBuffer = pcmBuffer.concat(bytesToPCM(packToIbmPackage(data)));
+
+            // 5 секунд тишины, чтобы загрузчик успел отработать
+            const multiplier = (/\d{2}-body\.bin/.test(name)) ? 5 : 1;
+            pcmBuffer = pcmBuffer.concat(new Array(44100 * multiplier).fill(128));
+        });
+
+        const wavBuffer = pcmToWav(pcmBuffer);
+
+        const blob = new Blob([wavBuffer.buffer], { type: 'audio/wav' });
+
+        saveAs(blob, `${fileName.replace(/\.[^/.]+$/, '')}.wav`);
+    }
+
+    reader.readAsArrayBuffer(event.target.files[0]);
+}
+
+document
+    .getElementById('zip')
+    .addEventListener('change', handleFileSelect, false);
+
+</script>
+
+
+<!-- Yandex.Metrika counter -->
+<script type="text/javascript" >
+    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+        m[i].l=1*new Date();
+        for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+        k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+    (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+    ym(90744159, "init", {
+        clickmap:true,
+        trackLinks:true,
+        accurateTrackBounce:true,
+        webvisor:true
+    });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/90744159" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
+<!-- /Yandex.Metrika counter -->
+
+</body>
+</html>

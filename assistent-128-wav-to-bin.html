@@ -6,11 +6,6 @@
     <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, minimum-scale=1.0">
     <meta name="description" content="Convert your CHR rom to image file"/>
     <script async="" src="/assets/jszip.min.js"></script>
-    <!--<script
-        src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.6.0/jszip.min.js"
-        integrity="sha512-uVSVjE7zYsGz4ag0HEzfugJ78oHCI1KhdkivjQro8ABL/PRiEO4ROwvrolYAcZnky0Fl/baWKYilQfWvESliRA=="
-        crossorigin="anonymous" referrerpolicy="no-referrer"
-    ></script>-->
     <script async="" src="/assets/FileSaver.min.js"></script>
     <style>
         html, body {
@@ -518,7 +513,7 @@ const handleFileSelect = (event) => {
                 compressionOptions: {
                     level: 9
                 }
-            }).then((blob) => saveAs(blob, `${fileName}.zip`));
+            }).then((blob) => saveAs(blob, `${fileName.replace(/\.[^/.]+$/, '')}.zip`));
         } else {
             errorsNode.innerText = JSON.stringify(errors, null, 3);
         }
