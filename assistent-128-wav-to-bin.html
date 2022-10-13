@@ -34,9 +34,51 @@
             color: lightgray;
         }
 
-        canvas {
-            display: block;
-            margin-top: 10px;
+        #info {
+            border: 1px solid lightgray;
+            border-radius: 5px;
+            padding: 8px;
+            margin: 8px 0;
+            position: relative;
+            display: none;
+        }
+        #info:after {
+            content: 'info';
+            position: absolute;
+            top: 0;
+            right: 0;
+            background-color: lightblue;
+            padding: 4px;
+        }
+
+        #errors {
+            border: 1px solid lightgray;
+            border-radius: 5px;
+            padding: 8px;
+            margin: 8px 0;
+            position: relative;
+            display: none;
+        }
+        #errors:after {
+            content: 'errors';
+            position: absolute;
+            top: 0;
+            right: 0;
+            background-color: lightcoral;
+            padding: 4px;
+        }
+
+        #controls {
+            display: flex;
+        }
+        #controls input {
+            flex: auto;
+        }
+        #controls button {
+            flex: auto;
+        }
+        #download {
+            display: none;
         }
     </style>
 </head>
@@ -45,8 +87,8 @@
 <a href="index.html" id="close">x</a>
 
 <div>
+    <h2>Конвертер wav файлов программ для ПК Ассистент 86/128</h2>
     <p>
-        Конвертер wav файлов программ для ПК Ассистент 86/128<br>
         Подерживается обычная и быстрая скорость файлов.<br>
         Поддерживаются файлы без бутлоадера и с бутлоадером.<br>
         Wav файл доллен быть: моно, дискретизация 44100, 8 бит.<br>
@@ -54,38 +96,47 @@
         Если не помогает - пришлите мне исходный wav файл, я посмотрю в чем может быть дело.<br>
         debug - добавляет лог в результирующий архив и выводит отладочную информацию в консоль.<br>
     </p>
+
+    <hr>
+
+    <div>
+        <p>
+            <label for="speed">speed:
+                <select id="speed">
+                    <option value="1" selected>fast</option>
+                    <option value="0">normal</option>
+                </select>
+            </label>
+        </p>
+        <p>
+            <label for="force">force (3 or 2):
+                <input type="number" min="1" max="10" id="force" value="3" />
+            </label>
+        </p>
+        <!--<p>
+            <label for="debug">debug:
+                <select id="debug">
+                    <option value="0" selected>off</option>
+                    <option value="1">on</option>
+                </select>
+            </label>
+        </p>-->
+    </div>
+
+    <hr>
+
     <p>
-        <label for="speed">speed:
-            <select id="speed">
-                <option value="1" selected>fast</option>
-                <option value="0">normal</option>
-            </select>
-        </label>
+        <div id="controls">
+            <input type="file" id="wav" accept="audio/wav">
+            <button id="download">download</button>
+        </div>
     </p>
 
     <p>
-        <label for="force">force (3 or 2):
-            <input type="text" id="force" value="3" />
-        </label>
+        <pre id="info"></pre>
+        <pre id="errors"></pre>
     </p>
 
-    <p>
-        <label for="debug">debug:
-            <select id="debug">
-                <option value="0" selected>off</option>
-                <option value="1">on</option>
-            </select>
-        </label>
-    </p>
-
-    <p>
-        <input type="file" id="wav">
-        <hr>
-        <pre>Please select .wav file</pre>
-    </p>
-    <p>
-        <div id="errors"></div>
-    </p>
 </div>
 
 <script>
@@ -97,9 +148,11 @@ const waveSignalMiddle = 127;
 const pcmWindowSize = 110;
 
 const log = [];
+const info = [];
 const errors = [];
 
 const originLog = window.console.log;
+const originError = window.console.log;
 
 window.console.log = (...messages) => {
     const message = messages.join(' ');
@@ -111,6 +164,11 @@ window.console.error = (...messages) => {
     log.push(message);
     errors.push(message);
     if (window.debug) originLog(message);
+    originError(message);
+}
+window.console.info = (...messages) => {
+    const message = messages.join(' ');
+    info.push(message);
 }
 
 class DataViewHandler {
@@ -296,7 +354,8 @@ const bitstreamToBinaries = (bitstream) => {
 
         // ничего не нашли, выходим
         if (headerAddress === null) {
-            console.log('nothing else found, exit!')
+            console.log('nothing else found, exit!');
+            console.info("\nnothing else found, exit!");
             break;
         }
 
@@ -328,7 +387,11 @@ const bitstreamToBinaries = (bitstream) => {
             headerBuffer.push(int)
         }
 
-        console.log('program name:', `[${headerBuffer.slice(1, 9).map(b => String.fromCharCode(b)).join('')}]`);
+        console.info(`\n${globalProgramCounter}0-header.bin`);
+
+        const programName = `[${headerBuffer.slice(1, 9).map(b => String.fromCharCode(b)).join('')}]`
+        console.log('program name:', programName);
+        console.info('program name:', programName);
 
         // Bit	Meaning if set	Example command to create
         //                  7	Tokenised BASIC	SAVE "file"
@@ -354,6 +417,7 @@ const bitstreamToBinaries = (bitstream) => {
         }
 
         console.log('program type:', programType);
+        console.info('program type:', programType);
 
         const buffer = new ArrayBuffer(2);
         const view = new DataView(buffer);
@@ -364,6 +428,7 @@ const bitstreamToBinaries = (bitstream) => {
         const bodyLength = view.getUint16(0, true);
 
         console.log('program bytes:', bodyLength);
+        console.info('program bytes:', bodyLength);
 
         const programBlocks = Math.floor(bodyLength / 256) + ((bodyLength % 256 > 0) ? 1 : 0);
         console.log('program blocks:', programBlocks);
@@ -374,6 +439,7 @@ const bitstreamToBinaries = (bitstream) => {
         const bodySegment = view.getUint16(0, true);
 
         console.log('program segment:', bodySegment);
+        console.info('program segment:', bodySegment);
 
         view.setUint8(0, headerBuffer[0x0E]);
         view.setUint8(1, headerBuffer[0x0F]);
@@ -381,6 +447,7 @@ const bitstreamToBinaries = (bitstream) => {
         const bodyOffset = view.getUint16(0, true);
 
         console.log('program offset:', bodyOffset);
+        console.info('program offset:', bodyOffset);
 
         // читаем CRC
         const crc1 = parseInt(bitstream.slice(headerAddress + (256 * 8), headerAddress + (256 * 8) + 8), 2);
@@ -404,6 +471,7 @@ const bitstreamToBinaries = (bitstream) => {
             file: new Uint8Array(headerBuffer),
         });
 
+        console.info(`\n${globalProgramCounter}0-body.bin`);
         console.log(`READ: ${globalProgramCounter} body`)
 
         // читаем тело программы
@@ -455,6 +523,8 @@ const bitstreamToBinaries = (bitstream) => {
 
         bodyBinaryBuf = bodyBinaryBuf.slice(0, bodyLength);
 
+        console.info('bytes found:', bodyBinaryBuf.length);
+
         binariesBuffer.push({
             name: `${globalProgramCounter}1-body.bin`,
             file: new Uint8Array(bodyBinaryBuf),
@@ -471,18 +541,32 @@ const handleFileSelect = (event) => {
 
     const reader = new FileReader();
     const errorsNode = document.getElementById('errors');
+    const infoNode = document.getElementById('info');
+    const downloadNode = document.getElementById('download');
 
     let fileName = event.target.files[0].name;
 
     reader.onload = (event) => {
+        if (!event.target) {
+            return ;
+        }
+
         log.length = 0;
+        info.length = 0;
 
         errorsNode.innerText = '';
+        infoNode.innerText = '';
+
+        errorsNode.style.display = 'none';
+        infoNode.style.display = 'none';
+        downloadNode.style.display = 'none';
 
         const dataView = new DataViewHandler(event.target.result, 0);
 
         const wavHeader = parseWavHeader(dataView);
         console.log('wav header:', JSON.stringify(wavHeader, null, 3));
+        console.info('file name:', fileName);
+        console.info('file size:', (event.target.result.byteLength / 1_000_000).toFixed(1), 'Mb');
 
         const pcmBuffer = [];
 
@@ -497,6 +581,9 @@ const handleFileSelect = (event) => {
 
         const binaries = bitstreamToBinaries(bitstreamString);
 
+        infoNode.innerText = info.join("\n");
+        infoNode.style.display = 'block';
+
         if (errors.length === 0) {
             const zip = new JSZip();
 
@@ -507,15 +594,15 @@ const handleFileSelect = (event) => {
             if (window.debug) zip.file('bitstream.txt', bitstreamString);
             if (window.debug) zip.file('log.txt', log.join("\n"));
 
-            zip.generateAsync({
-                type: 'blob',
-                compression: 'DEFLATE',
-                compressionOptions: {
-                    level: 9
-                }
-            }).then((blob) => saveAs(blob, `${fileName.replace(/\.[^/.]+$/, '')}.zip`));
+            zip
+                .generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 9 } })
+                .then((blob) => {
+                    downloadNode.style.display = 'block';
+                    downloadNode.onclick = () => saveAs(blob, `${fileName.replace(/\.[^/.]+$/, '')}.zip`);
+                });
         } else {
-            errorsNode.innerText = JSON.stringify(errors, null, 3);
+            errorsNode.innerText = errors.join("\n");
+            errorsNode.style.display = 'block';
         }
     }
 
