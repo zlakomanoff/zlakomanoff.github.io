@@ -438,16 +438,16 @@ const bitstreamToBinaries = (bitstream) => {
 
         const bodySegment = view.getUint16(0, true);
 
-        console.log('program segment:', bodySegment);
-        console.info('program segment:', bodySegment);
+        console.log('program segment:', bodySegment, `[0x${view.getUint16(0, false).toString(16).padStart(4, '0')}]`);
+        console.info('program segment:', `0x${view.getUint16(0, false).toString(16).toUpperCase().padStart(4, '0')}`);
 
         view.setUint8(0, headerBuffer[0x0E]);
         view.setUint8(1, headerBuffer[0x0F]);
 
         const bodyOffset = view.getUint16(0, true);
 
-        console.log('program offset:', bodyOffset);
-        console.info('program offset:', bodyOffset);
+        console.log('program offset:', bodyOffset, `[0x${view.getUint16(0, false).toString(16).padStart(4, '0')}]`);
+        console.info('program offset:', `0x${view.getUint16(0, false).toString(16).toUpperCase().padStart(4, '0')}`);
 
         // читаем CRC
         const crc1 = parseInt(bitstream.slice(headerAddress + (256 * 8), headerAddress + (256 * 8) + 8), 2);
@@ -613,9 +613,9 @@ document
     .getElementById('wav')
     .addEventListener('change', handleFileSelect, false);
 
-document
+/*document
     .getElementById('debug')
-    .addEventListener('change', e => window.debug = e.target.value === '1', false);
+    .addEventListener('change', e => window.debug = e.target.value === '1', false);*/
 
 </script>
 
