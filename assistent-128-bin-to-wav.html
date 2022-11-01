@@ -47,17 +47,8 @@
 <div>
     <p>
         Конвертер wav файлов программ для ПК Ассистент 86/128<br>
-        <!--Подерживается обычная и быстрая скорость файлов.<br>-->
         Поддерживаются файлы без бутлоадера и с бутлоадером.<br>
         bin файлы должны быть упакованы в zip архив<br>
-    </p>
-    <p>
-        <label for="speed">speed:
-            <select id="speed" disabled>
-                <option value="1" selected>fast</option>
-                <option value="0">normal</option>
-            </select>
-        </label>
     </p>
 
     <p>
@@ -72,21 +63,56 @@
 
 <script>
 
-// 22 точки, разница в 20
-const pcmZero = [
-    // 120, 100,  80,  60,  40,  20,  40,  60,  80, 100, 127,
-    // 130, 150, 170, 190, 210, 230, 210, 190, 170, 150, 127
-    20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
-    230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230
-];
-
-// 44 точки, разница 10
-const pcmOne = [
-    // 120, 110, 100,  90,  80,  70,  60,  50,  40,  30,  20,  20,  30,  40,  50,  60,  70,  80,  90, 100, 110, 127,
-    // 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 220, 210, 200, 190, 180, 170, 160, 150, 140, 130, 127
-    20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
-    230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230
-];
+const bitRates = {
+    'x1': {
+        // 44 точки
+        zero: [
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230
+        ],
+        // 88 точки
+        one: [
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230
+        ],
+    },
+    'x2': {
+        // 22 точки
+        zero: [
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230
+        ],
+        // 44 точки
+        one: [
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230, 230
+        ],
+    },
+    'x2.5': {
+        // 16 точек
+        zero: [
+            20,  20,  20,  20,  20,  20,  20,  20,
+            230, 230, 230, 230, 230, 230, 230, 230
+        ],
+        // 32 точки
+        one: [
+            20,  20,  20,  20,  20,  20,  20,  20,  20,  20,
+            20,  20,  20,  20,  20,  20,
+            230, 230, 230, 230, 230, 230, 230, 230, 230, 230,
+            230, 230, 230, 230, 230, 230
+        ],
+    }
+}
 
 const getCRC = (data) => {
     let crc = 0xFFFF;
@@ -155,7 +181,7 @@ const pcmToWav = (pcmBuffer) => {
     return wavBuffer;
 }
 
-const packToIbmPackage = (bytesBuffer) => {
+const packBinaryData = (bytesBuffer, syncByte = '16') => {
     bytesBuffer = new Uint8Array(bytesBuffer);
 
     // выравнивание кратно 256 байт
@@ -174,7 +200,7 @@ const packToIbmPackage = (bytesBuffer) => {
 
     // потом байты синхронизации 0xFE и 0x16
     payload.push(0xFE);
-    payload.push(0x16);
+    payload.push(Number.parseInt(syncByte, 16));
 
     // пушим по 256 байт с CRC
     for (let i = 0; i <= (bytesBuffer.byteLength - 256); i += 256) {
@@ -194,7 +220,7 @@ const packToIbmPackage = (bytesBuffer) => {
     return payload;
 }
 
-const bytesToPCM = (bytes, noGap = false) => {
+const bytesToPCM = (bytes, bitrate = 'x1', noGap = false) => {
 
     let buffer = [];
 
@@ -204,14 +230,14 @@ const bytesToPCM = (bytes, noGap = false) => {
     const push = pbs => pbs.forEach(byte => buffer.push(byte));
 
     bytes.forEach(byte => {
-        push(((byte & 0b10000000) !== 0) ? pcmOne : pcmZero);
-        push(((byte & 0b01000000) !== 0) ? pcmOne : pcmZero);
-        push(((byte & 0b00100000) !== 0) ? pcmOne : pcmZero);
-        push(((byte & 0b00010000) !== 0) ? pcmOne : pcmZero);
-        push(((byte & 0b00001000) !== 0) ? pcmOne : pcmZero);
-        push(((byte & 0b00000100) !== 0) ? pcmOne : pcmZero);
-        push(((byte & 0b00000010) !== 0) ? pcmOne : pcmZero);
-        push(((byte & 0b00000001) !== 0) ? pcmOne : pcmZero);
+        push(((byte & 0b10000000) !== 0) ? bitRates[bitrate].one : bitRates[bitrate].zero);
+        push(((byte & 0b01000000) !== 0) ? bitRates[bitrate].one : bitRates[bitrate].zero);
+        push(((byte & 0b00100000) !== 0) ? bitRates[bitrate].one : bitRates[bitrate].zero);
+        push(((byte & 0b00010000) !== 0) ? bitRates[bitrate].one : bitRates[bitrate].zero);
+        push(((byte & 0b00001000) !== 0) ? bitRates[bitrate].one : bitRates[bitrate].zero);
+        push(((byte & 0b00000100) !== 0) ? bitRates[bitrate].one : bitRates[bitrate].zero);
+        push(((byte & 0b00000010) !== 0) ? bitRates[bitrate].one : bitRates[bitrate].zero);
+        push(((byte & 0b00000001) !== 0) ? bitRates[bitrate].one : bitRates[bitrate].zero);
     });
 
     return [ ...prefix, ...buffer, ...postfix ];
@@ -230,53 +256,70 @@ const handleFileSelect = (event) => {
 
         const zip = await JSZip.loadAsync(event.target.result);
 
-        let zipFiles = [];
+        //console.log('zip.files:', zip.files);
 
-        // фильтруем файлы программы по названиям
-        for (let fileKey in zip.files) {
-            if (/\d{2}-(header|body)\.bin/.test(fileKey)) {
-                zipFiles.push(zip.files[fileKey]);
-            }
+        if (!zip.files['meta.json']) {
+            console.error('meta file not found');
+            return;
         }
+
+        const textDecoder = new TextDecoder('utf-8');
+        const metaFileArrayBuffer = await zip.files['meta.json'].async('arrayBuffer');
+        const meta = JSON.parse(textDecoder.decode(metaFileArrayBuffer));
+
+        //console.log('meta:', meta);
 
         const promises = [];
 
-        zipFiles.forEach(file => {
+        for(let fileName in zip.files) {
             promises.push(
                 new Promise(resolve => {
-                    file.async('arrayBuffer').then(payload => {
+                    zip.files[fileName].async('arrayBuffer').then(payload => {
                         resolve({
-                            name: file.name,
+                            name: fileName,
                             data: payload,
                         });
                     });
                 })
             );
+        }
+
+        const filesArray = await Promise.all(promises);
+        // console.log('filesArray:', filesArray);
+
+        const files = {}
+        filesArray.forEach(file => {
+            files[file.name] = file.data;
         });
 
-        const files = await Promise.all(promises);
-
-        // сортируем файлы по индексу в названии
-        const sortedFiles = files.sort((a, b) => {
-            if (a.name < b.name) return -1;
-            if (a.name > b.name) return 1;
-            return 0;
-        });
+        // console.log('files:', files);
 
         let pcmBuffer = []
 
-        sortedFiles.forEach(({ name, data }) => {
-            pcmBuffer = pcmBuffer.concat(bytesToPCM(packToIbmPackage(data)));
+        for(let fileName in meta) {
+            // console.log('fileName:', fileName);
+
+            const fileMeta = meta[fileName];
+            // console.log('file meta:', fileMeta);
+
+            const binaryData = files[fileName];
+            // console.log('binary data:', binaryData);
+
+            const packedData = packBinaryData(binaryData, fileMeta.sync);
+            // console.log('packed data:', packedData);
+
+            const pcmData = bytesToPCM(packedData, fileMeta.bitrate);
+            // console.log('pcm data:', pcmData)
+
+            pcmBuffer = pcmBuffer.concat(pcmData);
 
             // 5 секунд тишины, чтобы загрузчик успел отработать
-            const multiplier = (/\d{2}-body\.bin/.test(name)) ? 5 : 1;
+            const multiplier = (/\d+-program\.bin/.test(fileName)) ? 5 : 1;
             pcmBuffer = pcmBuffer.concat(new Array(44100 * multiplier).fill(128));
-        });
+        }
 
         const wavBuffer = pcmToWav(pcmBuffer);
-
         const blob = new Blob([wavBuffer.buffer], { type: 'audio/wav' });
-
         saveAs(blob, `${fileName.replace(/\.[^/.]+$/, '')}.wav`);
     }
 
